@@ -437,6 +437,574 @@ def refresh_accounts() -> str:
         return f"Error refreshing accounts: {str(e)}"
 
 
+# ============================================================================
+# NEW TOOLS - Account & Institution Data
+# ============================================================================
+
+
+@mcp.tool()
+def get_account_history(
+    account_id: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> str:
+    """
+    Get daily balance history for a specific account.
+
+    Args:
+        account_id: The unique identifier for the account
+        start_date: Start date (YYYY-MM-DD). Defaults to 30 days ago
+        end_date: End date (YYYY-MM-DD). Defaults to today
+    """
+    try:
+
+        async def _get_account_history():
+            client = await get_monarch_client()
+            kwargs = {}
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return await client.get_account_history(account_id, **kwargs)
+
+        result = run_async(_get_account_history())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get account history: {e}")
+        return f"Error getting account history: {str(e)}"
+
+
+@mcp.tool()
+def get_account_type_options() -> str:
+    """
+    Get all available account types and subtypes in Monarch Money.
+    Useful for account creation and understanding account categorization.
+    """
+    try:
+
+        async def _get_account_type_options():
+            client = await get_monarch_client()
+            return await client.get_account_type_options()
+
+        result = run_async(_get_account_type_options())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get account type options: {e}")
+        return f"Error getting account type options: {str(e)}"
+
+
+@mcp.tool()
+def get_institutions() -> str:
+    """
+    Get all financial institutions linked to your Monarch Money account.
+    Returns institution details including connection status and last sync time.
+    """
+    try:
+
+        async def _get_institutions():
+            client = await get_monarch_client()
+            return await client.get_institutions()
+
+        result = run_async(_get_institutions())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get institutions: {e}")
+        return f"Error getting institutions: {str(e)}"
+
+
+@mcp.tool()
+def get_subscription_details() -> str:
+    """
+    Get Monarch Money subscription status including plan type and expiration.
+    """
+    try:
+
+        async def _get_subscription_details():
+            client = await get_monarch_client()
+            return await client.get_subscription_details()
+
+        result = run_async(_get_subscription_details())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get subscription details: {e}")
+        return f"Error getting subscription details: {str(e)}"
+
+
+@mcp.tool()
+def is_accounts_refresh_complete() -> str:
+    """
+    Check if a running account refresh operation is complete.
+    Use this after calling refresh_accounts to poll for completion status.
+    """
+    try:
+
+        async def _is_accounts_refresh_complete():
+            client = await get_monarch_client()
+            return await client.is_accounts_refresh_complete()
+
+        result = run_async(_is_accounts_refresh_complete())
+
+        return json.dumps({"refresh_complete": result}, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to check refresh status: {e}")
+        return f"Error checking refresh status: {str(e)}"
+
+
+# ============================================================================
+# NEW TOOLS - Transaction Management
+# ============================================================================
+
+
+@mcp.tool()
+def get_transaction_details(transaction_id: str) -> str:
+    """
+    Get comprehensive details for a single transaction including all metadata.
+
+    Args:
+        transaction_id: The unique identifier for the transaction
+    """
+    try:
+
+        async def _get_transaction_details():
+            client = await get_monarch_client()
+            return await client.get_transaction_details(transaction_id)
+
+        result = run_async(_get_transaction_details())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction details: {e}")
+        return f"Error getting transaction details: {str(e)}"
+
+
+@mcp.tool()
+def get_transaction_splits(transaction_id: str) -> str:
+    """
+    Get split information for a transaction divided across multiple categories.
+
+    Args:
+        transaction_id: The unique identifier for the transaction
+    """
+    try:
+
+        async def _get_transaction_splits():
+            client = await get_monarch_client()
+            return await client.get_transaction_splits(transaction_id)
+
+        result = run_async(_get_transaction_splits())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction splits: {e}")
+        return f"Error getting transaction splits: {str(e)}"
+
+
+@mcp.tool()
+def update_transaction_splits(transaction_id: str, splits: str) -> str:
+    """
+    Split a transaction across multiple categories or modify existing splits.
+
+    Args:
+        transaction_id: The transaction to split
+        splits: JSON array of split objects. Each object should have:
+                - category_id (string): Category ID for this split
+                - amount (number): Amount for this split (positive value)
+                - merchant_name (string, optional): Merchant name
+                - notes (string, optional): Notes for this split
+
+    Example splits: '[{"category_id": "cat123", "amount": 50.00}, {"category_id": "cat456", "amount": 25.00}]'
+
+    Note: Sum of split amounts must equal the original transaction amount.
+    """
+    try:
+        # Parse the splits JSON
+        split_data = json.loads(splits)
+
+        async def _update_transaction_splits():
+            client = await get_monarch_client()
+            return await client.update_transaction_splits(transaction_id, split_data)
+
+        result = run_async(_update_transaction_splits())
+
+        return json.dumps(result, indent=2, default=str)
+    except json.JSONDecodeError as e:
+        return f"Error parsing splits JSON: {str(e)}. Please provide valid JSON array."
+    except Exception as e:
+        logger.error(f"Failed to update transaction splits: {e}")
+        return f"Error updating transaction splits: {str(e)}"
+
+
+@mcp.tool()
+def get_transactions_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> str:
+    """
+    Get aggregated transaction summary data (totals by category, merchant, etc.).
+
+    Args:
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+    """
+    try:
+
+        async def _get_transactions_summary():
+            client = await get_monarch_client()
+            kwargs = {}
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return await client.get_transactions_summary(**kwargs)
+
+        result = run_async(_get_transactions_summary())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transactions summary: {e}")
+        return f"Error getting transactions summary: {str(e)}"
+
+
+@mcp.tool()
+def get_recurring_transactions() -> str:
+    """
+    Get all recurring/scheduled transactions with frequency, next occurrence, and merchant details.
+    Useful for tracking subscriptions and upcoming bills.
+    """
+    try:
+
+        async def _get_recurring_transactions():
+            client = await get_monarch_client()
+            return await client.get_recurring_transactions()
+
+        result = run_async(_get_recurring_transactions())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get recurring transactions: {e}")
+        return f"Error getting recurring transactions: {str(e)}"
+
+
+# ============================================================================
+# NEW TOOLS - Categories & Tags
+# ============================================================================
+
+
+@mcp.tool()
+def get_transaction_categories() -> str:
+    """
+    Get all transaction categories configured in the account.
+    Returns category IDs, names, icons, and whether they are system or custom categories.
+    """
+    try:
+
+        async def _get_transaction_categories():
+            client = await get_monarch_client()
+            return await client.get_transaction_categories()
+
+        result = run_async(_get_transaction_categories())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction categories: {e}")
+        return f"Error getting transaction categories: {str(e)}"
+
+
+@mcp.tool()
+def get_transaction_category_groups() -> str:
+    """
+    Get all category groups (parent groupings for categories).
+    Returns group IDs, names, and associated category information.
+    """
+    try:
+
+        async def _get_transaction_category_groups():
+            client = await get_monarch_client()
+            return await client.get_transaction_category_groups()
+
+        result = run_async(_get_transaction_category_groups())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction category groups: {e}")
+        return f"Error getting transaction category groups: {str(e)}"
+
+
+@mcp.tool()
+def create_transaction_category(
+    name: str,
+    group_id: Optional[str] = None,
+    icon: Optional[str] = None,
+) -> str:
+    """
+    Create a new custom category for transactions.
+
+    Args:
+        name: Category name (max 50 chars, must be unique)
+        group_id: Optional parent category group ID
+        icon: Optional icon identifier
+    """
+    try:
+
+        async def _create_transaction_category():
+            client = await get_monarch_client()
+            kwargs = {"name": name}
+            if group_id:
+                kwargs["group_id"] = group_id
+            if icon:
+                kwargs["icon"] = icon
+            return await client.create_transaction_category(**kwargs)
+
+        result = run_async(_create_transaction_category())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to create transaction category: {e}")
+        return f"Error creating transaction category: {str(e)}"
+
+
+@mcp.tool()
+def get_transaction_tags() -> str:
+    """
+    Get all tags configured in the account.
+    Tags are user-defined labels that can be applied to any transaction.
+    """
+    try:
+
+        async def _get_transaction_tags():
+            client = await get_monarch_client()
+            return await client.get_transaction_tags()
+
+        result = run_async(_get_transaction_tags())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction tags: {e}")
+        return f"Error getting transaction tags: {str(e)}"
+
+
+@mcp.tool()
+def create_transaction_tag(
+    name: str,
+    color: Optional[str] = None,
+) -> str:
+    """
+    Create a new tag for transactions.
+
+    Args:
+        name: Tag name (max 30 chars)
+        color: Optional hex color code
+    """
+    try:
+
+        async def _create_transaction_tag():
+            client = await get_monarch_client()
+            kwargs = {"name": name}
+            if color:
+                kwargs["color"] = color
+            return await client.create_transaction_tag(**kwargs)
+
+        result = run_async(_create_transaction_tag())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to create transaction tag: {e}")
+        return f"Error creating transaction tag: {str(e)}"
+
+
+@mcp.tool()
+def set_transaction_tags(transaction_id: str, tag_ids: str) -> str:
+    """
+    Apply one or more tags to a transaction.
+
+    Args:
+        transaction_id: The transaction to tag
+        tag_ids: JSON array of tag IDs to apply. Example: '["tag123", "tag456"]'
+
+    Note: This replaces existing tags (not additive). Empty array removes all tags.
+    """
+    try:
+        # Parse the tag_ids JSON
+        tag_id_list = json.loads(tag_ids)
+
+        async def _set_transaction_tags():
+            client = await get_monarch_client()
+            return await client.set_transaction_tags(transaction_id, tag_id_list)
+
+        result = run_async(_set_transaction_tags())
+
+        return json.dumps(result, indent=2, default=str)
+    except json.JSONDecodeError as e:
+        return f"Error parsing tag_ids JSON: {str(e)}. Please provide valid JSON array."
+    except Exception as e:
+        logger.error(f"Failed to set transaction tags: {e}")
+        return f"Error setting transaction tags: {str(e)}"
+
+
+# ============================================================================
+# NEW TOOLS - Budgets
+# ============================================================================
+
+
+@mcp.tool()
+def set_budget_amount(
+    category_id: str,
+    amount: float,
+    month: Optional[str] = None,
+    apply_to_future: Optional[bool] = None,
+) -> str:
+    """
+    Set or update a budget amount for a specific category and month.
+
+    Args:
+        category_id: The category to budget
+        amount: Budget amount (0 to clear/unset the budget)
+        month: Month in YYYY-MM format. Defaults to current month
+        apply_to_future: If true, apply to this and all future months
+    """
+    try:
+
+        async def _set_budget_amount():
+            client = await get_monarch_client()
+            kwargs = {
+                "amount": amount,
+            }
+            if month:
+                # Convert YYYY-MM to start_date format expected by API
+                kwargs["start_date"] = f"{month}-01"
+            if apply_to_future is not None:
+                kwargs["apply_to_future"] = apply_to_future
+            return await client.set_budget_amount(category_id, **kwargs)
+
+        result = run_async(_set_budget_amount())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to set budget amount: {e}")
+        return f"Error setting budget amount: {str(e)}"
+
+
+@mcp.tool()
+def get_cashflow_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> str:
+    """
+    Get high-level cashflow metrics (income, expenses, savings, savings rate).
+
+    Args:
+        start_date: Start date (YYYY-MM-DD)
+        end_date: End date (YYYY-MM-DD)
+    """
+    try:
+
+        async def _get_cashflow_summary():
+            client = await get_monarch_client()
+            kwargs = {}
+            if start_date:
+                kwargs["start_date"] = start_date
+            if end_date:
+                kwargs["end_date"] = end_date
+            return await client.get_cashflow_summary(**kwargs)
+
+        result = run_async(_get_cashflow_summary())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get cashflow summary: {e}")
+        return f"Error getting cashflow summary: {str(e)}"
+
+
+# ============================================================================
+# NEW TOOLS - Account Management
+# ============================================================================
+
+
+@mcp.tool()
+def create_manual_account(
+    name: str,
+    account_type: str,
+    balance: float,
+    account_subtype: Optional[str] = None,
+    include_in_net_worth: bool = True,
+) -> str:
+    """
+    Create a new manual (non-linked) account for tracking assets or liabilities.
+
+    Args:
+        name: Account name
+        account_type: Type from get_account_type_options (e.g., "depository", "investment", "loan")
+        balance: Starting balance
+        account_subtype: Subtype (e.g., "checking", "savings", "brokerage")
+        include_in_net_worth: Include in net worth calculations (default: true)
+    """
+    try:
+
+        async def _create_manual_account():
+            client = await get_monarch_client()
+            kwargs = {
+                "account_name": name,
+                "account_type": account_type,
+                "account_balance": balance,
+                "include_in_net_worth": include_in_net_worth,
+            }
+            if account_subtype:
+                kwargs["account_subtype"] = account_subtype
+            return await client.create_manual_account(**kwargs)
+
+        result = run_async(_create_manual_account())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to create manual account: {e}")
+        return f"Error creating manual account: {str(e)}"
+
+
+@mcp.tool()
+def update_account(
+    account_id: str,
+    name: Optional[str] = None,
+    balance: Optional[float] = None,
+    include_in_net_worth: Optional[bool] = None,
+    hide_from_overview: Optional[bool] = None,
+) -> str:
+    """
+    Update an existing account's settings or balance.
+
+    Args:
+        account_id: The account to update
+        name: New account name
+        balance: New balance (manual accounts only)
+        include_in_net_worth: Update net worth inclusion
+        hide_from_overview: Hide from main dashboard
+    """
+    try:
+
+        async def _update_account():
+            client = await get_monarch_client()
+            kwargs = {}
+            if name is not None:
+                kwargs["name"] = name
+            if balance is not None:
+                kwargs["balance"] = balance
+            if include_in_net_worth is not None:
+                kwargs["include_in_net_worth"] = include_in_net_worth
+            if hide_from_overview is not None:
+                kwargs["hide_from_overview"] = hide_from_overview
+            return await client.update_account(account_id, **kwargs)
+
+        result = run_async(_update_account())
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to update account: {e}")
+        return f"Error updating account: {str(e)}"
+
+
 def main():
     """Main entry point for the server."""
     logger.info("Starting Monarch Money MCP Server...")
