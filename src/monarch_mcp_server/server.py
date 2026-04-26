@@ -380,7 +380,8 @@ def create_transaction(
 def update_transaction(
     transaction_id: str,
     amount: Optional[float] = None,
-    description: Optional[str] = None,
+    notes: Optional[str] = None,
+    merchant_name: Optional[str] = None,
     category_id: Optional[str] = None,
     date: Optional[str] = None,
 ) -> str:
@@ -390,7 +391,8 @@ def update_transaction(
     Args:
         transaction_id: The ID of the transaction to update
         amount: New transaction amount
-        description: New transaction description
+        notes: Notes to attach to the transaction (Monarch's notes field)
+        merchant_name: Override the merchant name displayed for the transaction
         category_id: New category ID
         date: New transaction date in YYYY-MM-DD format
     """
@@ -403,8 +405,10 @@ def update_transaction(
 
             if amount is not None:
                 update_data["amount"] = amount
-            if description is not None:
-                update_data["description"] = description
+            if notes is not None:
+                update_data["notes"] = notes
+            if merchant_name is not None:
+                update_data["merchant_name"] = merchant_name
             if category_id is not None:
                 update_data["category_id"] = category_id
             if date is not None:
