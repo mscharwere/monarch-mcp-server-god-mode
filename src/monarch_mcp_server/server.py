@@ -275,6 +275,118 @@ def get_transactions(
 
 
 @mcp.tool()
+def search_transactions(
+    query: str,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    account_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    tag_ids: Optional[str] = None,
+    has_attachments: Optional[bool] = None,
+    has_notes: Optional[bool] = None,
+    hidden_from_reports: Optional[bool] = None,
+    is_split: Optional[bool] = None,
+    is_recurring: Optional[bool] = None,
+    verbose: bool = True,
+) -> str:
+    """
+    Search transactions by text across merchant names, descriptions, and notes.
+
+    Accepts all the same filters as get_transactions plus a full-text query string.
+    Search is executed server-side by the Monarch Money API.
+
+    Args:
+        query: Search term (e.g. "IRS", "Amazon", "Target")
+        limit: Number of transactions to retrieve (default: 100)
+        offset: Number of transactions to skip (default: 0)
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+        account_id: Specific account ID to filter by
+        category_id: Specific category ID to filter by
+        tag_ids: Comma-separated tag IDs to filter by (e.g. "tag1,tag2")
+        has_attachments: Filter by attachment presence
+        has_notes: Filter by notes presence
+        hidden_from_reports: Filter by report visibility
+        is_split: Filter split transactions
+        is_recurring: Filter recurring transactions
+        verbose: If True (default), return all fields. If False, return compact
+                 format with only: id, date, amount, merchant, category, notes.
+    """
+    if not query or not query.strip():
+        return "Error: query parameter cannot be empty"
+
+    try:
+
+        async def _search_transactions():
+            client = await get_monarch_client()
+
+            filters: Dict[str, Any] = {"search": query.strip()}
+            if start_date:
+                filters["start_date"] = start_date
+            if end_date:
+                filters["end_date"] = end_date
+            if account_id:
+                filters["account_ids"] = [account_id]
+            if category_id:
+                filters["category_ids"] = [category_id]
+            if tag_ids:
+                filters["tag_ids"] = [t.strip() for t in tag_ids.split(",") if t.strip()]
+            if has_attachments is not None:
+                filters["has_attachments"] = has_attachments
+            if has_notes is not None:
+                filters["has_notes"] = has_notes
+            if hidden_from_reports is not None:
+                filters["hidden_from_reports"] = hidden_from_reports
+            if is_split is not None:
+                filters["is_split"] = is_split
+            if is_recurring is not None:
+                filters["is_recurring"] = is_recurring
+
+            return await client.get_transactions(limit=limit, offset=offset, **filters)
+
+        transactions = run_async(_search_transactions())
+
+        raw_results = transactions.get("allTransactions", {}).get("results", [])
+
+        if not verbose:
+            transaction_list = [_format_transaction_compact(txn) for txn in raw_results]
+        else:
+            transaction_list = []
+            for txn in raw_results:
+                transaction_info = {
+                    "id": txn.get("id"),
+                    "date": txn.get("date"),
+                    "amount": txn.get("amount"),
+                    "description": txn.get("description"),
+                    "category": txn.get("category", {}).get("name")
+                    if txn.get("category")
+                    else None,
+                    "account": txn.get("account", {}).get("displayName"),
+                    "merchant": txn.get("merchant", {}).get("name")
+                    if txn.get("merchant")
+                    else None,
+                    "is_pending": txn.get("isPending", False),
+                    "notes": txn.get("notes"),
+                }
+                transaction_list.append(transaction_info)
+
+        result = {
+            "search_metadata": {
+                "query": query.strip(),
+                "result_count": len(transaction_list),
+            },
+            "transactions": transaction_list,
+        }
+
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to search transactions: {e}")
+        return f"Error searching transactions: {str(e)}"
+
+
+@mcp.tool()
 def get_budgets() -> str:
     """Get budget information from Monarch Money."""
     try:
