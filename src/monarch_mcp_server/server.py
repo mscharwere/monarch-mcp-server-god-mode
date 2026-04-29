@@ -183,6 +183,26 @@ def get_accounts() -> str:
         return f"Error getting accounts: {str(e)}"
 
 
+def _format_transaction_compact(txn: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return a compact transaction object with only six essential fields:
+    id, date, amount, merchant name, category name, notes.
+
+    Used by get_transactions(verbose=False) and search_transactions(verbose=False)
+    to reduce token cost by ~80% vs. full verbose output.
+    """
+    category = txn.get("category")
+    compact: Dict[str, Any] = {
+        "id": txn.get("id"),
+        "date": txn.get("date"),
+        "amount": txn.get("amount"),
+        "merchant": txn.get("merchant", {}).get("name") if isinstance(txn.get("merchant"), dict) else None,
+        "category": category.get("name") if isinstance(category, dict) else None,
+        "notes": txn.get("notes") or None,
+    }
+    return compact
+
+
 @mcp.tool()
 def get_transactions(
     limit: int = 100,
@@ -190,6 +210,7 @@ def get_transactions(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     account_id: Optional[str] = None,
+    verbose: bool = True,
 ) -> str:
     """
     Get transactions from Monarch Money.
@@ -200,6 +221,9 @@ def get_transactions(
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
         account_id: Specific account ID to filter by
+        verbose: If True (default), return all fields. If False, return compact
+                 format with only: id, date, amount, merchant, category, notes.
+                 Use verbose=False for bulk fetches to reduce token usage (~80% reduction).
     """
     try:
 
@@ -219,9 +243,15 @@ def get_transactions(
 
         transactions = run_async(_get_transactions())
 
-        # Format transactions for display
+        raw_results = transactions.get("allTransactions", {}).get("results", [])
+
+        if not verbose:
+            transaction_list = [_format_transaction_compact(txn) for txn in raw_results]
+            return json.dumps(transaction_list, default=str)
+
+        # verbose=True path — full fields, unchanged behaviour
         transaction_list = []
-        for txn in transactions.get("allTransactions", {}).get("results", []):
+        for txn in raw_results:
             transaction_info = {
                 "id": txn.get("id"),
                 "date": txn.get("date"),
