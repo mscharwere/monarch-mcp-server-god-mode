@@ -76,7 +76,7 @@ Follow the prompts:
 
 ### 3. Start Using in Claude Desktop
 
-Once authenticated, you have access to 31 powerful tools for managing your finances.
+Once authenticated, you have access to 32 powerful tools for managing your finances.
 
 ---
 
@@ -92,7 +92,8 @@ Once authenticated, you have access to 31 powerful tools for managing your finan
 - **Check Refresh Status**: Poll for account refresh completion
 
 ### Transaction Management
-- **Get Transactions**: Fetch transactions with filtering by date, account, and pagination
+- **Get Transactions**: Fetch transactions with filtering by date, account, and pagination; supports `verbose=False` for compact 6-field output (~80% token reduction)
+- **Search Transactions**: Full-text search across merchant names, descriptions, and notes; supports all filters plus `verbose` param
 - **Get Transaction Details**: Comprehensive details for a single transaction
 - **Create Transaction**: Add new transactions to accounts
 - **Update Transaction**: Modify existing transactions
@@ -156,7 +157,8 @@ Once authenticated, you have access to 31 powerful tools for managing your finan
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
-| `get_transactions` | Get transactions with filtering | `limit`?, `offset`?, `start_date`?, `end_date`?, `account_id`? |
+| `get_transactions` | Get transactions with filtering | `limit`?, `offset`?, `start_date`?, `end_date`?, `account_id`?, `verbose`? |
+| `search_transactions` | Full-text search across merchant names, descriptions, notes | `query`, `limit`?, `offset`?, `start_date`?, `end_date`?, `account_id`?, `category_id`?, `tag_ids`?, `verbose`? |
 | `get_transaction_details` | Get full transaction details | `transaction_id` |
 | `get_transaction_splits` | Get transaction splits | `transaction_id` |
 | `get_transactions_summary` | Get aggregated summary | `start_date`?, `end_date`? |
@@ -293,7 +295,7 @@ Sessions last for weeks, but if expired:
 monarch-mcp-server/
 ├── src/monarch_mcp_server/
 │   ├── __init__.py
-│   ├── server.py              # Main server implementation (31 tools)
+│   ├── server.py              # Main server implementation (32 tools)
 │   └── secure_session.py      # Secure session management
 ├── login_setup.py             # Authentication setup script
 ├── pyproject.toml             # Project configuration
