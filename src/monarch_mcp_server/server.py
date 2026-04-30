@@ -699,6 +699,12 @@ def update_transactions_bulk(updates: str) -> str:
 
     async def _update_one(client: MonarchMoney, item: Dict[str, Any]) -> Dict[str, Any]:
         """Attempt a single transaction update; return success/failure envelope."""
+        if not isinstance(item, dict):
+            return {
+                "transaction_id": None,
+                "success": False,
+                "error": f"item must be a dict, got {type(item).__name__}",
+            }
         txn_id = item.get("transaction_id")
         if not txn_id:
             return {"transaction_id": None, "success": False, "error": "missing transaction_id"}
@@ -731,8 +737,26 @@ def update_transactions_bulk(updates: str) -> str:
         # Process in batches to cap concurrency
         for batch_start in range(0, len(update_list), _BULK_UPDATE_BATCH_SIZE):
             batch = update_list[batch_start : batch_start + _BULK_UPDATE_BATCH_SIZE]
-            batch_results = await asyncio.gather(*[_update_one(client, item) for item in batch])
-            all_results.extend(batch_results)
+            # return_exceptions=True is required: without it, BaseException subclasses
+            # (e.g. asyncio.CancelledError on Python 3.12+, which is no longer a
+            # subclass of Exception) escape _update_one's inner except clause, propagate
+            # to gather, and kill the whole batch — silently discarding successful results.
+            results = await asyncio.gather(
+                *[_update_one(client, item) for item in batch],
+                return_exceptions=True,
+            )
+            # Convert any raw BaseException instances to the standard envelope shape
+            # so callers always see dicts, never bare exception objects.
+            for idx, result in enumerate(results):
+                if isinstance(result, BaseException):
+                    src_item = batch[idx]
+                    tx_id = src_item.get("transaction_id") if isinstance(src_item, dict) else None
+                    results[idx] = {
+                        "transaction_id": tx_id,
+                        "success": False,
+                        "error": f"unexpected exception: {type(result).__name__}: {str(result)}",
+                    }
+            all_results.extend(results)
         return all_results
 
     try:
