@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from mcp.server.auth.provider import AccessTokenT
 from mcp.server.fastmcp import FastMCP
 import mcp.types as types
+from mcp.types import ToolAnnotations
 from monarchmoney import MonarchMoney, RequireMFAException
 from pydantic import BaseModel, Field
 from monarch_mcp_server.secure_session import secure_session
@@ -86,7 +87,12 @@ async def get_monarch_client() -> MonarchMoney:
     raise RuntimeError("🔐 Authentication needed! Run: python login_setup.py")
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def setup_authentication() -> str:
     """Get instructions for setting up secure authentication with Monarch Money."""
     return """🔐 Monarch Money - One-Time Setup
@@ -110,7 +116,12 @@ def setup_authentication() -> str:
 ✅ All credentials stay secure in terminal"""
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def check_auth_status() -> str:
     """Check if already authenticated with Monarch Money."""
     try:
@@ -134,7 +145,12 @@ def check_auth_status() -> str:
         return f"Error checking auth status: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=False,
+    )
+)
 def debug_session_loading() -> str:
     """Debug keyring session loading issues."""
     try:
@@ -151,7 +167,12 @@ def debug_session_loading() -> str:
         return f"❌ Keyring access failed:\nError: {str(e)}\nType: {type(e)}\nTraceback:\n{error_details}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_accounts() -> str:
     """Get all financial accounts from Monarch Money."""
     try:
@@ -203,7 +224,12 @@ def _format_transaction_compact(txn: Dict[str, Any]) -> Dict[str, Any]:
     return compact
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transactions(
     limit: int = 100,
     offset: int = 0,
@@ -277,7 +303,12 @@ def get_transactions(
         return f"Error getting transactions: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def search_transactions(
     query: str,
     limit: int = 100,
@@ -389,7 +420,12 @@ def search_transactions(
         return f"Error searching transactions: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_budgets() -> str:
     """Get budget information from Monarch Money."""
     try:
@@ -420,7 +456,12 @@ def get_budgets() -> str:
         return f"Error getting budgets: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_cashflow(
     start_date: Optional[str] = None, end_date: Optional[str] = None
 ) -> str:
@@ -452,7 +493,12 @@ def get_cashflow(
         return f"Error getting cashflow: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_account_holdings(account_id: str) -> str:
     """
     Get investment holdings for a specific account.
@@ -474,7 +520,14 @@ def get_account_holdings(account_id: str) -> str:
         return f"Error getting account holdings: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def create_transaction(
     account_id: str,
     amount: float,
@@ -521,7 +574,14 @@ def create_transaction(
         return f"Error creating transaction: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
 def update_transaction(
     transaction_id: str,
     amount: Optional[float] = None,
@@ -529,6 +589,9 @@ def update_transaction(
     merchant_name: Optional[str] = None,
     category_id: Optional[str] = None,
     date: Optional[str] = None,
+    hide_from_reports: Optional[bool] = None,
+    needs_review: Optional[bool] = None,
+    goal_id: Optional[str] = None,
 ) -> str:
     """
     Update an existing transaction in Monarch Money.
@@ -540,13 +603,17 @@ def update_transaction(
         merchant_name: Override the merchant name displayed for the transaction
         category_id: New category ID
         date: New transaction date in YYYY-MM-DD format
+        hide_from_reports: Exclude this transaction from reports/cashflow views
+        needs_review: Flag the transaction as needing review (True) or clear the flag (False)
+        goal_id: Associate with a goal ID; pass empty string "" to clear existing goal
+        notes: Notes/memo for the transaction; pass empty string "" to clear existing notes
     """
     try:
 
         async def _update_transaction():
             client = await get_monarch_client()
 
-            update_data = {"transaction_id": transaction_id}
+            update_data: Dict[str, Any] = {"transaction_id": transaction_id}
 
             if amount is not None:
                 update_data["amount"] = amount
@@ -558,6 +625,14 @@ def update_transaction(
                 update_data["category_id"] = category_id
             if date is not None:
                 update_data["date"] = date
+            if hide_from_reports is not None:
+                update_data["hide_from_reports"] = hide_from_reports
+            if needs_review is not None:
+                update_data["needs_review"] = needs_review
+            if goal_id is not None:
+                update_data["goal_id"] = goal_id
+            if notes is not None:
+                update_data["notes"] = notes
 
             return await client.update_transaction(**update_data)
 
@@ -569,7 +644,116 @@ def update_transaction(
         return f"Error updating transaction: {str(e)}"
 
 
-@mcp.tool()
+# Concurrency cap for bulk updates — prevents hammering the Monarch API with
+# hundreds of parallel requests. Groups of 10 are processed sequentially;
+# requests within each group are fired in parallel.
+_BULK_UPDATE_BATCH_SIZE = 10
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
+def update_transactions_bulk(updates: str) -> str:
+    """
+    Update multiple transactions in a single call.
+
+    There is no native bulk-update endpoint in the Monarch API; this tool
+    wraps update_transaction in controlled batches of 10 concurrent requests
+    to avoid overwhelming the API. Each transaction is attempted independently
+    — a failure on one does NOT abort the rest.
+
+    Args:
+        updates: JSON array of update objects. Each object must have:
+                 - transaction_id (string, required): The transaction to update
+                 - amount (number, optional): New amount
+                 - description (string, optional): New merchant/description name
+                 - category_id (string, optional): New category ID
+                 - date (string, optional): New date in YYYY-MM-DD format
+                 - hide_from_reports (boolean, optional): Exclude from reports
+                 - needs_review (boolean, optional): Flag for review
+                 - goal_id (string, optional): Associate with goal; "" clears it
+                 - notes (string, optional): Notes/memo; "" clears existing
+
+    Returns:
+        JSON array of per-transaction results:
+        [{"transaction_id": "...", "success": true, "result": {...}}, ...]
+        or
+        [{"transaction_id": "...", "success": false, "error": "..."}, ...]
+
+    Example:
+        '[{"transaction_id": "123", "category_id": "abc", "needs_review": false},
+          {"transaction_id": "456", "hide_from_reports": true}]'
+    """
+    try:
+        update_list = json.loads(updates)
+    except json.JSONDecodeError as e:
+        return f"Error parsing updates JSON: {str(e)}. Please provide a valid JSON array."
+
+    if not isinstance(update_list, list):
+        return "Error: updates must be a JSON array of update objects."
+
+    async def _update_one(client: MonarchMoney, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Attempt a single transaction update; return success/failure envelope."""
+        txn_id = item.get("transaction_id")
+        if not txn_id:
+            return {"transaction_id": None, "success": False, "error": "missing transaction_id"}
+        try:
+            update_data: Dict[str, Any] = {"transaction_id": txn_id}
+            if "amount" in item and item["amount"] is not None:
+                update_data["amount"] = item["amount"]
+            if "description" in item and item["description"] is not None:
+                update_data["merchant_name"] = item["description"]
+            if "category_id" in item and item["category_id"] is not None:
+                update_data["category_id"] = item["category_id"]
+            if "date" in item and item["date"] is not None:
+                update_data["date"] = item["date"]
+            if "hide_from_reports" in item and item["hide_from_reports"] is not None:
+                update_data["hide_from_reports"] = item["hide_from_reports"]
+            if "needs_review" in item and item["needs_review"] is not None:
+                update_data["needs_review"] = item["needs_review"]
+            if "goal_id" in item and item["goal_id"] is not None:
+                update_data["goal_id"] = item["goal_id"]
+            if "notes" in item and item["notes"] is not None:
+                update_data["notes"] = item["notes"]
+            result = await client.update_transaction(**update_data)
+            return {"transaction_id": txn_id, "success": True, "result": result}
+        except Exception as exc:
+            return {"transaction_id": txn_id, "success": False, "error": str(exc)}
+
+    async def _run_bulk():
+        client = await get_monarch_client()
+        all_results: List[Dict[str, Any]] = []
+        # Process in batches to cap concurrency
+        for batch_start in range(0, len(update_list), _BULK_UPDATE_BATCH_SIZE):
+            batch = update_list[batch_start : batch_start + _BULK_UPDATE_BATCH_SIZE]
+            batch_results = await asyncio.gather(*[_update_one(client, item) for item in batch])
+            all_results.extend(batch_results)
+        return all_results
+
+    try:
+        results = run_async(_run_bulk())
+        success_count = sum(1 for r in results if r.get("success"))
+        fail_count = len(results) - success_count
+        logger.info(f"Bulk update complete: {success_count} succeeded, {fail_count} failed out of {len(results)}")
+        return json.dumps(results, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to run bulk update: {e}")
+        return f"Error running bulk update: {str(e)}"
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def refresh_accounts() -> str:
     """Request account data refresh from financial institutions."""
     try:
@@ -591,7 +775,12 @@ def refresh_accounts() -> str:
 # ============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_account_history(
     account_id: str,
     start_date: Optional[str] = None,
@@ -624,7 +813,12 @@ def get_account_history(
         return f"Error getting account history: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_account_type_options() -> str:
     """
     Get all available account types and subtypes in Monarch Money.
@@ -644,7 +838,12 @@ def get_account_type_options() -> str:
         return f"Error getting account type options: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_institutions() -> str:
     """
     Get all financial institutions linked to your Monarch Money account.
@@ -664,7 +863,12 @@ def get_institutions() -> str:
         return f"Error getting institutions: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_subscription_details() -> str:
     """
     Get Monarch Money subscription status including plan type and expiration.
@@ -683,7 +887,12 @@ def get_subscription_details() -> str:
         return f"Error getting subscription details: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def is_accounts_refresh_complete() -> str:
     """
     Check if a running account refresh operation is complete.
@@ -708,10 +917,16 @@ def is_accounts_refresh_complete() -> str:
 # ============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transaction_details(transaction_id: str) -> str:
     """
     Get comprehensive details for a single transaction including all metadata.
+    Output includes: hideFromReports, needsReview, goal (id), and all other transaction fields.
 
     Args:
         transaction_id: The unique identifier for the transaction
@@ -730,7 +945,12 @@ def get_transaction_details(transaction_id: str) -> str:
         return f"Error getting transaction details: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transaction_splits(transaction_id: str) -> str:
     """
     Get split information for a transaction divided across multiple categories.
@@ -752,7 +972,14 @@ def get_transaction_splits(transaction_id: str) -> str:
         return f"Error getting transaction splits: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
 def update_transaction_splits(transaction_id: str, splits: str) -> str:
     """
     Split a transaction across multiple categories or modify existing splits.
@@ -787,7 +1014,12 @@ def update_transaction_splits(transaction_id: str, splits: str) -> str:
         return f"Error updating transaction splits: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transactions_summary(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -818,7 +1050,12 @@ def get_transactions_summary(
         return f"Error getting transactions summary: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_recurring_transactions() -> str:
     """
     Get all recurring/scheduled transactions with frequency, next occurrence, and merchant details.
@@ -843,7 +1080,12 @@ def get_recurring_transactions() -> str:
 # ============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transaction_categories() -> str:
     """
     Get all transaction categories configured in the account.
@@ -863,7 +1105,12 @@ def get_transaction_categories() -> str:
         return f"Error getting transaction categories: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transaction_category_groups() -> str:
     """
     Get all category groups (parent groupings for categories).
@@ -883,7 +1130,14 @@ def get_transaction_category_groups() -> str:
         return f"Error getting transaction category groups: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def create_transaction_category(
     name: str,
     group_id: Optional[str] = None,
@@ -916,7 +1170,12 @@ def create_transaction_category(
         return f"Error creating transaction category: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_transaction_tags() -> str:
     """
     Get all tags configured in the account.
@@ -936,7 +1195,14 @@ def get_transaction_tags() -> str:
         return f"Error getting transaction tags: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def create_transaction_tag(
     name: str,
     color: Optional[str] = None,
@@ -965,7 +1231,14 @@ def create_transaction_tag(
         return f"Error creating transaction tag: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
 def set_transaction_tags(transaction_id: str, tag_ids: str) -> str:
     """
     Apply one or more tags to a transaction.
@@ -999,7 +1272,14 @@ def set_transaction_tags(transaction_id: str, tag_ids: str) -> str:
 # ============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
 def set_budget_amount(
     category_id: str,
     amount: float,
@@ -1037,7 +1317,12 @@ def set_budget_amount(
         return f"Error setting budget amount: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
 def get_cashflow_summary(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -1073,7 +1358,14 @@ def get_cashflow_summary(
 # ============================================================================
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
 def create_manual_account(
     name: str,
     account_type: str,
@@ -1113,7 +1405,14 @@ def create_manual_account(
         return f"Error creating manual account: {str(e)}"
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
 def update_account(
     account_id: str,
     name: Optional[str] = None,

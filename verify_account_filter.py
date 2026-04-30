@@ -15,15 +15,22 @@ would equal unfiltered_count (because account_id was silently ignored).
 
 import asyncio
 import sys
-from monarch_mcp_server.secure_session import secure_session
-from monarchmoney import MonarchMoney
+from pathlib import Path
+
+# Add the src directory to the Python path for imports
+src_path = Path(__file__).parent / "src"
+sys.path.insert(0, str(src_path))
+
+from monarch_mcp_server.server import get_monarch_client  # noqa: E402
+# NOTE: We call get_monarch_client() (the server's entrypoint) rather than
+# secure_session.get_authenticated_client() directly. get_monarch_client()
+# handles token refresh and falls back to env-var credentials — using the raw
+# secure_session accessor bypasses that fallback and will fail silently if the
+# keyring token is absent or stale. Always use this entrypoint for auth.
 
 
 async def main(account_id: str):
-    client = secure_session.get_authenticated_client()
-    if client is None:
-        print("ERROR: No authenticated session found. Run login_setup.py first.")
-        sys.exit(1)
+    client = await get_monarch_client()
 
     print(f"Testing account filter for account_id: {account_id}\n")
 
@@ -33,7 +40,9 @@ async def main(account_id: str):
     unfiltered_count = len(all_results)
     print(f"Unfiltered call  → {unfiltered_count} transactions returned")
 
-    # Filtered — should return only transactions for the given account
+    # Filtered — should return only transactions for the given account.
+    # The lib expects account_ids: List[str], NOT account_id: str.
+    # Passing account_id directly is silently ignored by the lib.
     filtered_txns = await client.get_transactions(
         limit=200, offset=0, account_ids=[account_id]
     )
