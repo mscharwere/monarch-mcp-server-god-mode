@@ -206,14 +206,17 @@ def get_transactions(
         async def _get_transactions():
             client = await get_monarch_client()
 
-            # Build filters
+            # Build filters.
+            # NOTE: The underlying monarchmoney lib accepts `account_ids` (List[str]),
+            # NOT `account_id` (str). Passing `account_id` as a kwarg is silently
+            # ignored by the lib (no error, no filter). We translate here.
             filters = {}
             if start_date:
                 filters["start_date"] = start_date
             if end_date:
                 filters["end_date"] = end_date
             if account_id:
-                filters["account_id"] = account_id
+                filters["account_ids"] = [account_id]  # lib expects a list
 
             return await client.get_transactions(limit=limit, offset=offset, **filters)
 
