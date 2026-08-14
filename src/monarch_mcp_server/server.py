@@ -778,13 +778,33 @@ def update_transactions_bulk(updates: str) -> str:
         openWorldHint=True,
     )
 )
-def refresh_accounts() -> str:
-    """Request account data refresh from financial institutions."""
+def refresh_accounts(account_ids: Optional[List[str]] = None) -> str:
+    """
+    Request account data refresh from financial institutions.
+
+    Args:
+        account_ids: Specific account IDs to refresh. If omitted (default),
+                     ALL linked accounts are refreshed. The underlying
+                     monarchmoney lib requires an explicit account_ids list
+                     (there is no server-side "refresh everything" mode), so
+                     when this is omitted we first fetch the full account
+                     list and pass all of its IDs.
+    """
     try:
 
         async def _refresh_accounts():
             client = await get_monarch_client()
-            return await client.request_accounts_refresh()
+            ids = account_ids
+            if not ids:
+                accounts = await client.get_accounts()
+                ids = [
+                    account["id"]
+                    for account in accounts.get("accounts", [])
+                    if account.get("id")
+                ]
+                if not ids:
+                    raise ValueError("No linked accounts found to refresh")
+            return await client.request_accounts_refresh(ids)
 
         result = run_async(_refresh_accounts())
 
