@@ -435,25 +435,79 @@ def get_budgets() -> str:
             return await client.get_budgets()
 
         budgets = run_async(_get_budgets())
-
-        # Format budgets for display
-        budget_list = []
-        for budget in budgets.get("budgets", []):
-            budget_info = {
-                "id": budget.get("id"),
-                "name": budget.get("name"),
-                "amount": budget.get("amount"),
-                "spent": budget.get("spent"),
-                "remaining": budget.get("remaining"),
-                "category": budget.get("category", {}).get("name"),
-                "period": budget.get("period"),
-            }
-            budget_list.append(budget_info)
+        budget_list = _parse_budgets_response(budgets)
 
         return json.dumps(budget_list, indent=2, default=str)
     except Exception as e:
         logger.error(f"Failed to get budgets: {e}")
         return f"Error getting budgets: {str(e)}"
+
+
+def _parse_budgets_response(budgets: dict) -> list:
+    """
+    Flatten the real `MonarchMoney.get_budgets()` GraphQL response into a
+    list of per-category, per-month budget entries.
+
+    The response has NO top-level "budgets" key (a wrong assumption that
+    previously made this tool always return []). The actual shape is:
+
+        {
+          "budgetData": {
+            "monthlyAmountsByCategory": [
+              {
+                "category": {"id": "..."},
+                "monthlyAmounts": [
+                  {
+                    "month": "2026-08-01",
+                    "plannedCashFlowAmount": 290.0,
+                    "actualAmount": 123.45,
+                    "remainingAmount": 166.55,
+                    ...
+                  },
+                  ...
+                ],
+              },
+              ...
+            ],
+            ...
+          },
+          "categoryGroups": [
+            {"id": "...", "name": "...", "categories": [{"id": "...", "name": "..."}, ...]},
+            ...
+          ],
+          ...
+        }
+
+    `categoryGroups[].categories` (present in the same response) is used to
+    resolve category ids to human-readable names, since
+    `monthlyAmountsByCategory` only carries category ids.
+    """
+    category_names: dict = {}
+    for group in budgets.get("categoryGroups", []) or []:
+        for category in group.get("categories", []) or []:
+            category_id = category.get("id")
+            if category_id is not None:
+                category_names[category_id] = category.get("name")
+
+    budget_data = budgets.get("budgetData", {}) or {}
+
+    budget_list = []
+    for entry in budget_data.get("monthlyAmountsByCategory", []) or []:
+        category = entry.get("category", {}) or {}
+        category_id = category.get("id")
+        for monthly_amount in entry.get("monthlyAmounts", []) or []:
+            budget_list.append(
+                {
+                    "category_id": category_id,
+                    "category": category_names.get(category_id),
+                    "month": monthly_amount.get("month"),
+                    "amount": monthly_amount.get("plannedCashFlowAmount"),
+                    "spent": monthly_amount.get("actualAmount"),
+                    "remaining": monthly_amount.get("remainingAmount"),
+                }
+            )
+
+    return budget_list
 
 
 @mcp.tool(
