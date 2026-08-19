@@ -1351,7 +1351,14 @@ def set_budget_amount(
                 kwargs["start_date"] = f"{month}-01"
             if apply_to_future is not None:
                 kwargs["apply_to_future"] = apply_to_future
-            return await client.set_budget_amount(category_id, **kwargs)
+            # NOTE: category_id MUST be passed as a keyword argument here.
+            # MonarchMoney.set_budget_amount()'s real signature is
+            # (self, amount, category_id=None, category_group_id=None, ...) —
+            # `amount` is positional arg 0, not `category_id`. Passing
+            # category_id positionally while kwargs also contains "amount"
+            # causes "got multiple values for argument 'amount'". This exact
+            # regression happened twice (see test_set_budget_amount.py).
+            return await client.set_budget_amount(category_id=category_id, **kwargs)
 
         result = run_async(_set_budget_amount())
 
