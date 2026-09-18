@@ -4,7 +4,7 @@ import os
 import logging
 import asyncio
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -426,16 +426,43 @@ def search_transactions(
         openWorldHint=True,
     )
 )
-def get_budgets() -> str:
-    """Get budget information from Monarch Money."""
+def get_budgets(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    category: Optional[str] = None,
+) -> str:
+    """Get budget information from Monarch Money.
+
+    Without start_date/end_date, defaults to the CURRENT calendar month only
+    (not the underlying API's own last-month-to-next-month default) — the
+    unfiltered 3-month x every-category response is large enough to exceed
+    typical tool-output limits (258 rows / ~50KB observed). Pass explicit
+    dates to widen the window if a multi-month view is actually needed.
+
+    :param start_date: earliest month to include, "yyyy-mm-dd" (default: first of current month)
+    :param end_date: latest month to include, "yyyy-mm-dd" (default: first of next month, i.e. current month only)
+    :param category: optional case-insensitive substring filter on category name (e.g. "Pets") to shrink the response further
+    """
     try:
+        resolved_start = start_date
+        resolved_end = end_date
+        if resolved_start is None or resolved_end is None:
+            today = date.today()
+            current_month_start = today.replace(day=1)
+            next_month_start = (current_month_start + timedelta(days=32)).replace(day=1)
+            resolved_start = resolved_start or current_month_start.isoformat()
+            resolved_end = resolved_end or next_month_start.isoformat()
 
         async def _get_budgets():
             client = await get_monarch_client()
-            return await client.get_budgets()
+            return await client.get_budgets(start_date=resolved_start, end_date=resolved_end)
 
         budgets = run_async(_get_budgets())
         budget_list = _parse_budgets_response(budgets)
+
+        if category:
+            needle = category.lower()
+            budget_list = [b for b in budget_list if needle in (b.get("category") or "").lower()]
 
         return json.dumps(budget_list, indent=2, default=str)
     except Exception as e:
