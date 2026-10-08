@@ -17,7 +17,12 @@ from pathlib import Path
 src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
-from monarchmoney import MonarchMoney, RequireMFAException
+from monarchmoney import (
+    CaptchaRequiredException,
+    LoginFailedException,
+    MonarchMoney,
+    RequireMFAException,
+)
 from dotenv import load_dotenv
 from monarch_mcp_server.secure_session import secure_session
 
@@ -76,8 +81,17 @@ async def main():
             print("🔐 MFA code required")
             mfa_code = input("Two Factor Code: ")
             
-            # Use the same instance for MFA
-            await mm.multi_factor_authenticate(email, password, mfa_code)
+            # Use the same instance for MFA.
+            # monarchmoneycommunity >= 1.5.1 raises LoginFailedException on a
+            # bad/expired MFA code (previously RequireMFAException again).
+            try:
+                await mm.multi_factor_authenticate(email, password, mfa_code)
+            except CaptchaRequiredException as captcha_error:
+                print(f"❌ Login blocked by CAPTCHA: {captcha_error}")
+                return
+            except LoginFailedException as mfa_error:
+                print(f"❌ MFA failed (bad or expired code?): {mfa_error}")
+                return
             print("✅ MFA authentication successful")
             mm.save_session()  # Manually save the session
         
