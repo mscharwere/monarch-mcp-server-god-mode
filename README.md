@@ -163,7 +163,7 @@ Once authenticated, you have access to 32 powerful tools for managing your finan
 | `get_transaction_splits` | Get transaction splits | `transaction_id` |
 | `get_transactions_summary` | Get aggregated summary | `start_date`?, `end_date`? |
 | `get_recurring_transactions` | Get recurring/scheduled transactions | None |
-| `create_transaction` | Create new transaction | `account_id`, `amount`, `description`, `date`, `category_id`?, `merchant_name`? |
+| `create_transaction` | Create new transaction (account and category by name or ID) | `amount`, `date`, `merchant_name`, `account`, `category`, `notes`?, `update_balance`? |
 | `update_transaction` | Update existing transaction | `transaction_id`, `amount`?, `description`?, `category_id`?, `date`? |
 | `update_transaction_splits` | Split transaction across categories | `transaction_id`, `splits` (JSON array) |
 
