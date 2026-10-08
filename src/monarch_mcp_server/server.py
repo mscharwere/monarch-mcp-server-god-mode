@@ -204,17 +204,28 @@ def get_accounts() -> str:
         return f"Error getting accounts: {str(e)}"
 
 
+LONE_END_DATE_WINDOW_DAYS = 365
+
+
 def _complete_date_range(
     start_date: Optional[str], end_date: Optional[str]
 ) -> tuple:
     """
     The Monarch API rejects a date filter with only one bound. If just one is
-    supplied, fill the other (start -> 1970-01-01, end -> today).
+    supplied, fill the other:
+      - only start_date -> end_date = today
+      - only end_date   -> start_date = LONE_END_DATE_WINDOW_DAYS (365) days
+        before end_date (a bounded window, not an unbounded scan from 1970).
+    An unparseable end_date is passed through unchanged so the API reports it.
     """
     if start_date and not end_date:
         end_date = date.today().isoformat()
     elif end_date and not start_date:
-        start_date = "1970-01-01"
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            start_date = (end - timedelta(days=LONE_END_DATE_WINDOW_DAYS)).isoformat()
+        except ValueError:
+            start_date = "1970-01-01"
     return start_date, end_date
 
 
@@ -259,7 +270,8 @@ def get_transactions(
         limit: Number of transactions to retrieve (default: 100)
         offset: Number of transactions to skip (default: 0)
         start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format. If given without start_date, only the
+            365 days ending on end_date are searched (pass start_date to go further back).
         account_id: Specific account ID to filter by
         verbose: If True (default), return all fields. If False, return compact
                  format with only: id, date, amount, merchant, category, notes.
@@ -351,7 +363,8 @@ def search_transactions(
         limit: Number of transactions to retrieve (default: 100)
         offset: Number of transactions to skip (default: 0)
         start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format. If given without start_date, only the
+            365 days ending on end_date are searched (pass start_date to go further back).
         account_id: Specific account ID to filter by
         category_id: Specific category ID to filter by
         tag_ids: Comma-separated tag IDs to filter by (e.g. "tag1,tag2")

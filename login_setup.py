@@ -76,7 +76,14 @@ async def main():
         try:
             await mm.login(email, password, use_saved_session=False, save_session=True)
             print("✅ Login successful!")
-                
+
+        except CaptchaRequiredException as captcha_error:
+            # monarchmoneycommunity >= 1.5.x: raised on the first step too.
+            print(f"❌ Login blocked by CAPTCHA: {captcha_error}")
+            return
+        except LoginFailedException as login_error:
+            print(f"❌ Login failed (check email/password): {login_error}")
+            return
         except RequireMFAException:
             print("🔐 MFA code required")
             mfa_code = input("Two Factor Code: ")

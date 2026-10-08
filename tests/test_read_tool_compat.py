@@ -54,3 +54,15 @@ def test_get_transactions_end_only_is_completed():
         server.get_transactions(end_date="2026-01-31")
     kwargs = fake.get_transactions.await_args.kwargs
     assert kwargs["end_date"] == "2026-01-31" and kwargs["start_date"]
+
+
+def test_lone_end_date_defaults_to_365_day_window_not_1970():
+    server = _server()
+    assert server._complete_date_range(None, "2026-01-31") == ("2025-01-31", "2026-01-31")
+    s, e = server._complete_date_range("2026-01-01", None)
+    assert s == "2026-01-01" and e
+    assert server._complete_date_range("2026-01-01", "2026-02-01") == (
+        "2026-01-01",
+        "2026-02-01",
+    )
+    assert server._complete_date_range(None, None) == (None, None)
