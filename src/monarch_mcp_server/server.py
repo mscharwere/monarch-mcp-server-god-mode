@@ -204,6 +204,31 @@ def get_accounts() -> str:
         return f"Error getting accounts: {str(e)}"
 
 
+LONE_END_DATE_WINDOW_DAYS = 365
+
+
+def _complete_date_range(
+    start_date: Optional[str], end_date: Optional[str]
+) -> tuple:
+    """
+    The Monarch API rejects a date filter with only one bound. If just one is
+    supplied, fill the other:
+      - only start_date -> end_date = today
+      - only end_date   -> start_date = LONE_END_DATE_WINDOW_DAYS (365) days
+        before end_date (a bounded window, not an unbounded scan from 1970).
+    An unparseable end_date is passed through unchanged so the API reports it.
+    """
+    if start_date and not end_date:
+        end_date = date.today().isoformat()
+    elif end_date and not start_date:
+        try:
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            start_date = (end - timedelta(days=LONE_END_DATE_WINDOW_DAYS)).isoformat()
+        except ValueError:
+            start_date = "1970-01-01"
+    return start_date, end_date
+
+
 def _format_transaction_compact(txn: Dict[str, Any]) -> Dict[str, Any]:
     """
     Return a compact transaction object with only six essential fields:
@@ -245,7 +270,8 @@ def get_transactions(
         limit: Number of transactions to retrieve (default: 100)
         offset: Number of transactions to skip (default: 0)
         start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format. If given without start_date, only the
+            365 days ending on end_date are searched (pass start_date to go further back).
         account_id: Specific account ID to filter by
         verbose: If True (default), return all fields. If False, return compact
                  format with only: id, date, amount, merchant, category, notes.
@@ -261,10 +287,11 @@ def get_transactions(
             # NOT `account_id` (str). Passing `account_id` as a kwarg is silently
             # ignored by the lib (no error, no filter). We translate here.
             filters = {}
-            if start_date:
-                filters["start_date"] = start_date
-            if end_date:
-                filters["end_date"] = end_date
+            range_start, range_end = _complete_date_range(start_date, end_date)
+            if range_start:
+                filters["start_date"] = range_start
+            if range_end:
+                filters["end_date"] = range_end
             if account_id:
                 filters["account_ids"] = [account_id]  # lib expects a list
 
@@ -293,7 +320,7 @@ def get_transactions(
                 "merchant": txn.get("merchant", {}).get("name")
                 if txn.get("merchant")
                 else None,
-                "is_pending": txn.get("isPending", False),
+                "is_pending": bool(txn.get("pending", txn.get("isPending", False))),
             }
             transaction_list.append(transaction_info)
 
@@ -336,7 +363,8 @@ def search_transactions(
         limit: Number of transactions to retrieve (default: 100)
         offset: Number of transactions to skip (default: 0)
         start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format. If given without start_date, only the
+            365 days ending on end_date are searched (pass start_date to go further back).
         account_id: Specific account ID to filter by
         category_id: Specific category ID to filter by
         tag_ids: Comma-separated tag IDs to filter by (e.g. "tag1,tag2")
@@ -357,10 +385,11 @@ def search_transactions(
             client = await get_monarch_client()
 
             filters: Dict[str, Any] = {"search": query.strip()}
-            if start_date:
-                filters["start_date"] = start_date
-            if end_date:
-                filters["end_date"] = end_date
+            range_start, range_end = _complete_date_range(start_date, end_date)
+            if range_start:
+                filters["start_date"] = range_start
+            if range_end:
+                filters["end_date"] = range_end
             if account_id:
                 filters["account_ids"] = [account_id]
             if category_id:
@@ -401,7 +430,7 @@ def search_transactions(
                     "merchant": txn.get("merchant", {}).get("name")
                     if txn.get("merchant")
                     else None,
-                    "is_pending": txn.get("isPending", False),
+                    "is_pending": bool(txn.get("pending", txn.get("isPending", False))),
                     "notes": txn.get("notes"),
                 }
                 transaction_list.append(transaction_info)
@@ -914,23 +943,31 @@ def get_account_history(
     """
     Get daily balance history for a specific account.
 
+    The Monarch API returns the account's full history; start_date/end_date
+    (inclusive) are applied client-side to trim it. Omit both for everything.
+
     Args:
         account_id: The unique identifier for the account
-        start_date: Start date (YYYY-MM-DD). Defaults to 30 days ago
-        end_date: End date (YYYY-MM-DD). Defaults to today
+        start_date: Optional first date to include (YYYY-MM-DD)
+        end_date: Optional last date to include (YYYY-MM-DD)
     """
     try:
 
         async def _get_account_history():
             client = await get_monarch_client()
-            kwargs = {}
-            if start_date:
-                kwargs["start_date"] = start_date
-            if end_date:
-                kwargs["end_date"] = end_date
-            return await client.get_account_history(account_id, **kwargs)
+            # The library's get_account_history() takes only account_id.
+            return await client.get_account_history(account_id)
 
         result = run_async(_get_account_history())
+
+        if isinstance(result, list) and (start_date or end_date):
+            result = [
+                row
+                for row in result
+                if isinstance(row, dict)
+                and (not start_date or str(row.get("date") or "") >= start_date)
+                and (not end_date or str(row.get("date") or "") <= end_date)
+            ]
 
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
@@ -1255,6 +1292,37 @@ def get_transaction_category_groups() -> str:
         return f"Error getting transaction category groups: {str(e)}"
 
 
+def _resolve_category_group(groups_response: Dict[str, Any], group_ref: str) -> str:
+    """
+    Resolve a category group reference (ID or name) to a group ID.
+
+    Matches an exact ID first, then a case-insensitive name. Raises ValueError
+    listing the valid groups when nothing matches (or the name is ambiguous).
+    """
+    groups = (groups_response or {}).get("categoryGroups", []) or []
+    ref = str(group_ref).strip()
+
+    for g in groups:
+        if str(g.get("id")) == ref:
+            return str(g["id"])
+
+    matches = [
+        g for g in groups if (g.get("name") or "").strip().lower() == ref.lower()
+    ]
+    if len(matches) == 1:
+        return str(matches[0]["id"])
+    if len(matches) > 1:
+        raise ValueError(
+            f"Category group name '{group_ref}' is ambiguous; use the group id. "
+            f"Matching group ids: {', '.join(str(g.get('id')) for g in matches)}"
+        )
+
+    valid = (
+        ", ".join(f"{g.get('name')} (id {g.get('id')})" for g in groups) or "none found"
+    )
+    raise ValueError(f"Category group '{group_ref}' not found. Valid groups: {valid}")
+
+
 @mcp.tool(
     annotations=ToolAnnotations(
         readOnlyHint=False,
@@ -1265,24 +1333,44 @@ def get_transaction_category_groups() -> str:
 )
 def create_transaction_category(
     name: str,
+    group: Optional[str] = None,
     group_id: Optional[str] = None,
     icon: Optional[str] = None,
 ) -> str:
     """
     Create a new custom category for transactions.
 
+    A parent category group is REQUIRED. Pass it as `group` (group NAME or ID,
+    e.g. "Food & Dining") -- use get_transaction_category_groups to list them.
+    `group_id` is accepted as a legacy alias for `group` (ID or name).
+
     Args:
         name: Category name (max 50 chars, must be unique)
-        group_id: Optional parent category group ID
-        icon: Optional icon identifier
+        group: Parent category group name or ID (required unless group_id is given)
+        group_id: Legacy alias for `group`
+        icon: Optional emoji/icon for the category
     """
+    group_ref = group or group_id
+    if not name or not name.strip():
+        return "Error creating transaction category: name cannot be empty"
+    if not group_ref or not str(group_ref).strip():
+        return (
+            "Error creating transaction category: a parent category group is "
+            "required. Pass `group` (name or id); use "
+            "get_transaction_category_groups to list them."
+        )
+
     try:
 
         async def _create_transaction_category():
             client = await get_monarch_client()
-            kwargs = {"name": name}
-            if group_id:
-                kwargs["group_id"] = group_id
+            resolved_group_id = _resolve_category_group(
+                await client.get_transaction_category_groups(), group_ref
+            )
+            kwargs: Dict[str, Any] = {
+                "group_id": resolved_group_id,
+                "transaction_category_name": name.strip(),
+            }
             if icon:
                 kwargs["icon"] = icon
             return await client.create_transaction_category(**kwargs)
