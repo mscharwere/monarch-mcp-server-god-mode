@@ -652,6 +652,91 @@ def get_account_holdings(account_id: str) -> str:
         return f"Error getting account holdings: {str(e)}"
 
 
+def _resolve_by_id_or_name(
+    items: List[Dict[str, Any]],
+    ref: str,
+    kind: str,
+    name_keys: tuple,
+    describe,
+) -> str:
+    """
+    Resolve a reference (id or name) against a list of dicts with an "id".
+
+    Exact id first, then case-insensitive name (any of `name_keys`). Raises
+    ValueError on no match or an ambiguous name, listing the options.
+    """
+    ref_s = str(ref).strip()
+    for it in items:
+        if str(it.get("id")) == ref_s:
+            return str(it["id"])
+
+    def names(it):
+        return [
+            (it.get(k) or "").strip().lower() for k in name_keys if it.get(k)
+        ]
+
+    matches = [it for it in items if ref_s.lower() in names(it)]
+    if len(matches) == 1:
+        return str(matches[0]["id"])
+    if len(matches) > 1:
+        raise ValueError(
+            f"{kind} name '{ref}' is ambiguous; use the id. Matches: "
+            + "; ".join(f"{describe(m)} (id {m.get('id')})" for m in matches)
+        )
+    valid = ", ".join(sorted({describe(it) for it in items})) or "none found"
+    raise ValueError(f"{kind} '{ref}' not found. Valid {kind.lower()}s: {valid}")
+
+
+def _account_is_open(account: Dict[str, Any]) -> bool:
+    """True if an account is open (not closed/deactivated) and not hidden.
+
+    Fields come from the Monarch AccountFields fragment: `deactivatedAt`
+    (set when an account is closed) and `isHidden` (hidden by the user).
+    `hideFromList` is only a summary-display preference and does not make an
+    account unusable.
+    """
+    return not account.get("deactivatedAt") and not account.get("isHidden")
+
+
+def _resolve_account(accounts_response: Dict[str, Any], ref: str) -> str:
+    """Resolve an account id or (display) name to an account id.
+
+    Names are matched only against open, non-hidden accounts, and the "valid
+    accounts" list in errors shows only those. An explicit id may be any
+    account, but if it is closed or hidden a clear error is raised rather than
+    silently writing to it.
+    """
+    accounts = (accounts_response or {}).get("accounts", []) or []
+    ref_s = str(ref).strip()
+    for a in accounts:
+        if str(a.get("id")) == ref_s and not _account_is_open(a):
+            label = a.get("displayName") or a.get("name") or ref_s
+            state = "closed" if a.get("deactivatedAt") else "hidden"
+            raise ValueError(
+                f"Account '{label}' (id {ref_s}) is {state}; refusing to create a "
+                "transaction on it. Use an open account."
+            )
+    return _resolve_by_id_or_name(
+        [a for a in accounts if _account_is_open(a)],
+        ref,
+        "Account",
+        ("displayName", "name"),
+        lambda a: a.get("displayName") or a.get("name") or str(a.get("id")),
+    )
+
+
+def _resolve_category(categories_response: Dict[str, Any], ref: str) -> str:
+    """Resolve a transaction category id or name to a category id."""
+    categories = (categories_response or {}).get("categories", []) or []
+    return _resolve_by_id_or_name(
+        categories,
+        ref,
+        "Category",
+        ("name",),
+        lambda c: c.get("name") or str(c.get("id")),
+    )
+
+
 @mcp.tool(
     annotations=ToolAnnotations(
         readOnlyHint=False,
@@ -661,44 +746,77 @@ def get_account_holdings(account_id: str) -> str:
     )
 )
 def create_transaction(
-    account_id: str,
     amount: float,
-    description: str,
     date: str,
+    merchant_name: str,
+    account: Optional[str] = None,
+    category: Optional[str] = None,
+    notes: Optional[str] = None,
+    update_balance: bool = False,
+    account_id: Optional[str] = None,
     category_id: Optional[str] = None,
-    merchant_name: Optional[str] = None,
 ) -> str:
     """
     Create a new transaction in Monarch Money.
 
+    The Monarch API requires a merchant name and a category. Account and
+    category can each be given by NAME or ID (names are matched
+    case-insensitively; ambiguous or unknown names return an error listing the
+    options, and nothing is created).
+
     Args:
-        account_id: The account ID to add the transaction to
         amount: Transaction amount (positive for income, negative for expenses)
-        description: Transaction description
         date: Transaction date in YYYY-MM-DD format
-        category_id: Optional category ID
-        merchant_name: Optional merchant name
+        merchant_name: Merchant name (required)
+        account: Account name or ID (required; see get_accounts)
+        category: Category name or ID (required; see get_transaction_categories)
+        notes: Optional notes
+        update_balance: Also adjust the account balance (default False)
+        account_id: Legacy alias for `account`
+        category_id: Legacy alias for `category`
     """
+    account_ref = account or account_id
+    category_ref = category or category_id
+
+    if not merchant_name or not str(merchant_name).strip():
+        return "Error creating transaction: merchant_name is required"
+    if not account_ref or not str(account_ref).strip():
+        return "Error creating transaction: account (name or id) is required"
+    if not category_ref or not str(category_ref).strip():
+        return "Error creating transaction: category (name or id) is required"
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return "Error creating transaction: date must be in YYYY-MM-DD format"
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount != amount:
+        return "Error creating transaction: amount must be a number"
+
     try:
 
         async def _create_transaction():
             client = await get_monarch_client()
-
-            transaction_data = {
-                "account_id": account_id,
-                "amount": amount,
-                "description": description,
-                "date": date,
-            }
-
-            if category_id:
-                transaction_data["category_id"] = category_id
-            if merchant_name:
-                transaction_data["merchant_name"] = merchant_name
-
-            return await client.create_transaction(**transaction_data)
+            resolved_account = _resolve_account(
+                await client.get_accounts(), account_ref
+            )
+            resolved_category = _resolve_category(
+                await client.get_transaction_categories(), category_ref
+            )
+            return await client.create_transaction(
+                date=date,
+                account_id=resolved_account,
+                amount=amount,
+                merchant_name=str(merchant_name).strip(),
+                category_id=resolved_category,
+                notes=notes or "",
+                update_balance=bool(update_balance),
+            )
 
         result = run_async(_create_transaction())
+
+        payload = (result or {}).get("createTransaction") or {}
+        errors = payload.get("errors")
+        if errors:
+            return f"Error creating transaction: {json.dumps(errors, default=str)}"
 
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
