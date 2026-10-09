@@ -229,10 +229,16 @@ def _complete_date_range(
     return start_date, end_date
 
 
+def _owner_name(txn: Dict[str, Any]) -> Optional[str]:
+    """Owner display name of a transaction (None when shared/unassigned)."""
+    owner = txn.get("ownedByUser")
+    return owner.get("name") if isinstance(owner, dict) else None
+
+
 def _format_transaction_compact(txn: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Return a compact transaction object with only six essential fields:
-    id, date, amount, merchant name, category name, notes.
+    Return a compact transaction object with only eight essential fields:
+    id, date, amount, merchant name, category name, notes, owner, is_pending.
 
     Used by get_transactions(verbose=False) and search_transactions(verbose=False)
     to reduce token cost by ~80% vs. full verbose output.
@@ -245,6 +251,9 @@ def _format_transaction_compact(txn: Dict[str, Any]) -> Dict[str, Any]:
         "merchant": txn.get("merchant", {}).get("name") if isinstance(txn.get("merchant"), dict) else None,
         "category": category.get("name") if isinstance(category, dict) else None,
         "notes": txn.get("notes") or None,
+        # None = shared/unassigned
+        "owner": _owner_name(txn),
+        "is_pending": bool(txn.get("pending", txn.get("isPending", False))),
     }
     return compact
 
@@ -262,6 +271,7 @@ def get_transactions(
     end_date: Optional[str] = None,
     account_id: Optional[str] = None,
     verbose: bool = True,
+    is_pending: Optional[bool] = None,
 ) -> str:
     """
     Get transactions from Monarch Money.
@@ -274,8 +284,11 @@ def get_transactions(
             365 days ending on end_date are searched (pass start_date to go further back).
         account_id: Specific account ID to filter by
         verbose: If True (default), return all fields. If False, return compact
-                 format with only: id, date, amount, merchant, category, notes.
+                 format with only: id, date, amount, merchant, category, notes,
+                 owner, is_pending.
                  Use verbose=False for bulk fetches to reduce token usage (~80% reduction).
+        is_pending: True = only pending transactions, False = only posted
+                    (settled) transactions, omit for both.
     """
     try:
 
@@ -294,6 +307,8 @@ def get_transactions(
                 filters["end_date"] = range_end
             if account_id:
                 filters["account_ids"] = [account_id]  # lib expects a list
+            if is_pending is not None:
+                filters["is_pending"] = is_pending
 
             return await client.get_transactions(limit=limit, offset=offset, **filters)
 
@@ -321,6 +336,7 @@ def get_transactions(
                 if txn.get("merchant")
                 else None,
                 "is_pending": bool(txn.get("pending", txn.get("isPending", False))),
+                "owner": _owner_name(txn),
             }
             transaction_list.append(transaction_info)
 
@@ -350,6 +366,7 @@ def search_transactions(
     hidden_from_reports: Optional[bool] = None,
     is_split: Optional[bool] = None,
     is_recurring: Optional[bool] = None,
+    is_pending: Optional[bool] = None,
     verbose: bool = True,
 ) -> str:
     """
@@ -373,8 +390,10 @@ def search_transactions(
         hidden_from_reports: Filter by report visibility
         is_split: Filter split transactions
         is_recurring: Filter recurring transactions
+        is_pending: True = only pending transactions, False = only posted
         verbose: If True (default), return all fields. If False, return compact
-                 format with only: id, date, amount, merchant, category, notes.
+                 format with only: id, date, amount, merchant, category, notes,
+                 owner, is_pending.
     """
     if not query or not query.strip():
         return "Error: query parameter cannot be empty"
@@ -406,6 +425,8 @@ def search_transactions(
                 filters["is_split"] = is_split
             if is_recurring is not None:
                 filters["is_recurring"] = is_recurring
+            if is_pending is not None:
+                filters["is_pending"] = is_pending
 
             return await client.get_transactions(limit=limit, offset=offset, **filters)
 
@@ -432,6 +453,7 @@ def search_transactions(
                     else None,
                     "is_pending": bool(txn.get("pending", txn.get("isPending", False))),
                     "notes": txn.get("notes"),
+                    "owner": _owner_name(txn),
                 }
                 transaction_list.append(transaction_info)
 
@@ -702,6 +724,8 @@ def update_transaction(
     hide_from_reports: Optional[bool] = None,
     needs_review: Optional[bool] = None,
     goal_id: Optional[str] = None,
+    reviewed: Optional[bool] = None,
+    owner_user_id: Optional[str] = None,
 ) -> str:
     """
     Update an existing transaction in Monarch Money.
@@ -717,6 +741,11 @@ def update_transaction(
         needs_review: Flag the transaction as needing review (True) or clear the flag (False)
         goal_id: Associate with a goal ID; pass empty string "" to clear existing goal
         notes: Notes/memo for the transaction; pass empty string "" to clear existing notes
+        reviewed: True to mark the transaction as reviewed. (To remove reviewed
+                  status, use needs_review=True.)
+        owner_user_id: Household member ID to assign as owner (see
+                       get_household_members); empty string "" sets the
+                       transaction to Shared/joint. Omit to leave ownership unchanged.
     """
     try:
 
@@ -743,6 +772,10 @@ def update_transaction(
                 update_data["goal_id"] = goal_id
             if notes is not None:
                 update_data["notes"] = notes
+            if reviewed is not None:
+                update_data["reviewed"] = reviewed
+            if owner_user_id is not None:
+                update_data["owner_user_id"] = owner_user_id
 
             return await client.update_transaction(**update_data)
 
@@ -788,6 +821,9 @@ def update_transactions_bulk(updates: str) -> str:
                  - needs_review (boolean, optional): Flag for review
                  - goal_id (string, optional): Associate with goal; "" clears it
                  - notes (string, optional): Notes/memo; "" clears existing
+                 - reviewed (boolean, optional): True marks as reviewed
+                 - owner_user_id (string, optional): Household member id (see
+                   get_household_members) to set as owner; "" = Shared/joint
 
     Returns:
         JSON array of per-transaction results:
@@ -836,6 +872,10 @@ def update_transactions_bulk(updates: str) -> str:
                 update_data["goal_id"] = item["goal_id"]
             if "notes" in item and item["notes"] is not None:
                 update_data["notes"] = item["notes"]
+            if "reviewed" in item and item["reviewed"] is not None:
+                update_data["reviewed"] = item["reviewed"]
+            if "owner_user_id" in item and item["owner_user_id"] is not None:
+                update_data["owner_user_id"] = item["owner_user_id"]
             result = await client.update_transaction(**update_data)
             return {"transaction_id": txn_id, "success": True, "result": result}
         except Exception as exc:
@@ -1671,6 +1711,437 @@ def update_account(
     except Exception as e:
         logger.error(f"Failed to update account: {e}")
         return f"Error updating account: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Read-only reporting tools (household, rules, net worth, credit, duplicates)
+# ---------------------------------------------------------------------------
+
+
+def _format_household_members(response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Flatten myHousehold.users into compact member dicts."""
+    users = ((response or {}).get("myHousehold") or {}).get("users") or []
+    return [
+        {
+            "id": u.get("id"),
+            "name": u.get("name"),
+            "display_name": u.get("displayName"),
+            "role": u.get("householdRole"),
+        }
+        for u in users
+    ]
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
+def get_household_members() -> str:
+    """
+    List household members (ids, names, roles).
+
+    Use a member `id` as `owner_user_id` in update_transaction /
+    update_transactions_bulk to assign a transaction owner.
+    """
+    try:
+
+        async def _get_household_members():
+            client = await get_monarch_client()
+            return await client.get_household_members()
+
+        response = run_async(_get_household_members())
+        return json.dumps(_format_household_members(response), indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get household members: {e}")
+        return f"Error getting household members: {str(e)}"
+
+
+def _criteria_list(criteria: Any) -> Optional[List[str]]:
+    """[{operator, value}, ...] -> ["operator value", ...] (None if empty)."""
+    if not criteria:
+        return None
+    out = [
+        f"{c.get('operator')} {c.get('value')}".strip()
+        for c in criteria
+        if isinstance(c, dict)
+    ]
+    return out or None
+
+
+def _format_amount_criteria(amount: Any) -> Optional[str]:
+    if not isinstance(amount, dict):
+        return None
+    kind = "expense" if amount.get("isExpense") else "income"
+    value_range = amount.get("valueRange")
+    if isinstance(value_range, dict) and (
+        value_range.get("lower") is not None or value_range.get("upper") is not None
+    ):
+        return f"{kind} {amount.get('operator')} {value_range.get('lower')}..{value_range.get('upper')}"
+    return f"{kind} {amount.get('operator')} {amount.get('value')}"
+
+
+def _names(items: Any, key: str = "name") -> Optional[List[str]]:
+    if not items:
+        return None
+    out = [i.get(key) or i.get("displayName") or i.get("id") for i in items if isinstance(i, dict)]
+    return out or None
+
+
+def _format_transaction_rule(rule: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Compact view of one transaction rule: only the criteria ("if") and
+    actions ("then") that are actually set, plus usage stats.
+    """
+    cond: Dict[str, Any] = {}
+    merchant_key = (
+        "merchant_original_statement"
+        if rule.get("merchantCriteriaUseOriginalStatement")
+        else "merchant"
+    )
+    for key, value in (
+        (merchant_key, _criteria_list(rule.get("merchantCriteria"))),
+        ("original_statement", _criteria_list(rule.get("originalStatementCriteria"))),
+        ("merchant_name", _criteria_list(rule.get("merchantNameCriteria"))),
+        ("amount", _format_amount_criteria(rule.get("amountCriteria"))),
+        ("categories", _names(rule.get("categories")) or rule.get("categoryIds") or None),
+        ("accounts", _names(rule.get("accounts"), "displayName") or rule.get("accountIds") or None),
+        ("owners", _names(rule.get("criteriaOwnerUsers"), "displayName")
+         or rule.get("criteriaOwnerUserIds") or None),
+        ("business_entities", _names(rule.get("criteriaBusinessEntities"))),
+    ):
+        if value:
+            cond[key] = value
+    if rule.get("criteriaOwnerIsJoint"):
+        cond["owner_is_joint"] = True
+
+    then: Dict[str, Any] = {}
+    set_merchant = rule.get("setMerchantAction")
+    if isinstance(set_merchant, dict) and set_merchant.get("name"):
+        then["set_merchant"] = set_merchant["name"]
+    set_category = rule.get("setCategoryAction")
+    if isinstance(set_category, dict) and set_category.get("name"):
+        then["set_category"] = set_category["name"]
+    if rule.get("addTagsAction"):
+        then["add_tags"] = _names(rule["addTagsAction"])
+    for key, field in (("link_goal", "linkGoalAction"), ("link_savings_goal", "linkSavingsGoalAction")):
+        if isinstance(rule.get(field), dict) and rule[field].get("name"):
+            then[key] = rule[field]["name"]
+    review_user = rule.get("needsReviewByUserAction")
+    if isinstance(review_user, dict):
+        then["needs_review_by"] = review_user.get("displayName") or review_user.get("name") or review_user.get("id")
+    if rule.get("reviewStatusAction"):
+        then["review_status"] = rule["reviewStatusAction"]
+    for key, field in (
+        ("unassign_needs_review", "unassignNeedsReviewByUserAction"),
+        ("send_notification", "sendNotificationAction"),
+        ("hide_from_reports", "setHideFromReportsAction"),
+        ("link_to_paydown_budget", "setLinkToPaydownBudgetAction"),
+    ):
+        if rule.get(field):
+            then[key] = True
+    if rule.get("actionSetOwnerIsJoint"):
+        then["set_owner"] = "joint"
+    elif isinstance(rule.get("actionSetOwner"), dict):
+        owner = rule["actionSetOwner"]
+        then["set_owner"] = owner.get("displayName") or owner.get("id")
+    entity = rule.get("actionSetBusinessEntity")
+    if isinstance(entity, dict) and entity.get("name"):
+        then["set_business_entity"] = entity["name"]
+    if rule.get("splitTransactionsAction"):
+        then["split_transaction"] = True
+
+    return {
+        "priority": rule.get("order"),
+        "id": rule.get("id"),
+        "if": cond,
+        "then": then,
+        "applied_recently": rule.get("recentApplicationCount"),
+        "last_applied": rule.get("lastAppliedAt"),
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
+def get_transaction_rules() -> str:
+    """
+    List transaction auto-categorization rules (read-only), in priority order
+    (priority 0 runs first). Output is compact: for each rule only the
+    criteria ("if") and actions ("then") that are set, plus how often the
+    rule applied recently.
+    """
+    try:
+
+        async def _get_transaction_rules():
+            client = await get_monarch_client()
+            return await client.get_transaction_rules()
+
+        response = run_async(_get_transaction_rules())
+        rules = (response or {}).get("transactionRules") or []
+        formatted = [
+            _format_transaction_rule(r)
+            for r in sorted(rules, key=lambda r: (r.get("order") is None, r.get("order") or 0))
+        ]
+        return json.dumps({"count": len(formatted), "rules": formatted}, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get transaction rules: {e}")
+        return f"Error getting transaction rules: {str(e)}"
+
+
+_NET_WORTH_INTERVALS = ("daily", "weekly", "monthly")
+
+
+def _period_key(day: date, interval: str) -> str:
+    if interval == "monthly":
+        return day.strftime("%Y-%m")
+    if interval == "weekly":
+        iso = day.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    return day.isoformat()
+
+
+def _build_net_worth_trend(snapshots: List[Dict[str, Any]], interval: str) -> Dict[str, Any]:
+    """
+    Turn raw daily {date, balance} snapshots into a trend: one point per
+    period (the LAST snapshot of each period), each with the change vs the
+    previous point, plus an overall summary.
+    """
+    rows = []
+    for snap in snapshots or []:
+        try:
+            day = date.fromisoformat(str(snap.get("date"))[:10])
+        except ValueError:
+            continue
+        if snap.get("balance") is None:
+            continue
+        rows.append((day, float(snap["balance"])))
+    rows.sort(key=lambda r: r[0])
+    if not rows:
+        return {"summary": None, "points": []}
+
+    by_period: Dict[str, tuple] = {}
+    for day, balance in rows:
+        by_period[_period_key(day, interval)] = (day, balance)  # last one wins
+    selected = list(by_period.values())
+
+    points = []
+    previous: Optional[float] = None
+    for day, balance in selected:
+        point: Dict[str, Any] = {"date": day.isoformat(), "net_worth": round(balance, 2)}
+        if previous is not None:
+            change = balance - previous
+            point["change"] = round(change, 2)
+            point["change_pct"] = round(change / abs(previous) * 100, 2) if previous else None
+        points.append(point)
+        previous = balance
+
+    first_balance, last_balance = rows[0][1], rows[-1][1]
+    total_change = last_balance - first_balance
+    summary = {
+        "interval": interval,
+        "from": rows[0][0].isoformat(),
+        "to": rows[-1][0].isoformat(),
+        "start_net_worth": round(first_balance, 2),
+        "end_net_worth": round(last_balance, 2),
+        "change": round(total_change, 2),
+        "change_pct": round(total_change / abs(first_balance) * 100, 2) if first_balance else None,
+        "high": round(max(b for _, b in rows), 2),
+        "low": round(min(b for _, b in rows), 2),
+        "points": len(points),
+    }
+    return {"summary": summary, "points": points}
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
+def get_net_worth_history(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    interval: str = "monthly",
+) -> str:
+    """
+    Net worth trend over time with period-over-period deltas (read-only).
+
+    Wraps Monarch's aggregate daily snapshots and downsamples to one point per
+    period (the last snapshot in the period), each with its change vs the
+    previous point, plus an overall summary (start/end, change, % change,
+    high/low).
+
+    Args:
+        start_date: First date to include (YYYY-MM-DD). Default: 365 days ago.
+        end_date: Last date to include (YYYY-MM-DD). Default: today.
+        interval: "daily", "weekly" or "monthly" (default "monthly")
+    """
+    interval = (interval or "monthly").lower()
+    if interval not in _NET_WORTH_INTERVALS:
+        return f"Error: interval must be one of {', '.join(_NET_WORTH_INTERVALS)}"
+
+    resolved_start = start_date or (date.today() - timedelta(days=365)).isoformat()
+    try:
+
+        async def _get_net_worth_history():
+            client = await get_monarch_client()
+            kwargs: Dict[str, Any] = {"start_date": resolved_start}
+            if end_date:
+                kwargs["end_date"] = end_date
+            return await client.get_aggregate_snapshots(**kwargs)
+
+        response = run_async(_get_net_worth_history())
+        snapshots = (response or {}).get("aggregateSnapshots") or []
+        return json.dumps(_build_net_worth_trend(snapshots, interval), indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get net worth history: {e}")
+        return f"Error getting net worth history: {str(e)}"
+
+
+def _build_credit_history(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Group credit score snapshots per household member with deltas."""
+    response = response or {}
+    names = {
+        u.get("id"): u.get("displayName") or u.get("name")
+        for u in ((response.get("myHousehold") or {}).get("users") or [])
+    }
+    per_user: Dict[str, List[Dict[str, Any]]] = {}
+    for snap in response.get("creditScoreSnapshots") or []:
+        if snap.get("score") is None:
+            continue
+        uid = (snap.get("user") or {}).get("id")
+        per_user.setdefault(uid, []).append(
+            {"date": snap.get("reportedDate"), "score": snap["score"]}
+        )
+
+    tracking = (response.get("spinwheelUser") or {}).get("creditScoreTrackingStatus")
+    members = []
+    for uid, history in per_user.items():
+        history.sort(key=lambda h: str(h["date"]))
+        previous = None
+        for h in history:
+            if previous is not None:
+                h["change"] = h["score"] - previous
+            previous = h["score"]
+        latest, first = history[-1], history[0]
+        members.append(
+            {
+                "user": names.get(uid) or uid,
+                "latest_score": latest["score"],
+                "latest_date": latest["date"],
+                "change_vs_previous": latest.get("change"),
+                "change_over_period": latest["score"] - first["score"],
+                "period_from": first["date"],
+                "history": history,
+            }
+        )
+    return {"tracking_status": tracking, "members": members}
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
+def get_credit_history() -> str:
+    """
+    Credit score history per household member (read-only): latest score, change
+    vs the previous reading, change over the whole period, and each reading
+    with its delta.
+    """
+    try:
+
+        async def _get_credit_history():
+            client = await get_monarch_client()
+            return await client.get_credit_history()
+
+        response = run_async(_get_credit_history())
+        return json.dumps(_build_credit_history(response), indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get credit history: {e}")
+        return f"Error getting credit history: {str(e)}"
+
+
+def _format_duplicate_group(group: Dict[str, Any]) -> Dict[str, Any]:
+    txns = group.get("transactions") or []
+    return {
+        "date": group.get("date"),
+        "amount": group.get("amount"),
+        "account": group.get("account_name"),
+        "statement": group.get("plaidName"),
+        "count": len(txns),
+        # oldest first: the first id is the likely original
+        "transaction_ids": [t.get("id") for t in txns],
+    }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        openWorldHint=True,
+    )
+)
+def find_duplicate_transactions(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    account_id: Optional[str] = None,
+    max_pages: int = 10,
+    limit: int = 50,
+) -> str:
+    """
+    Report groups of likely duplicate transactions (READ-ONLY; this tool never
+    deletes or changes anything).
+
+    Transactions are grouped when they share the same date, amount, bank
+    statement text (plaidName) and account -- i.e. the same upstream event
+    written twice (e.g. after an account re-link). Legitimate repeat charges
+    carry distinct statement references and are not grouped.
+
+    Args:
+        start_date: Earliest date to scan (YYYY-MM-DD)
+        end_date: Latest date to scan (YYYY-MM-DD)
+        account_id: Restrict the scan to one account
+        max_pages: Pages of 500 transactions to scan (default 10 = 5,000
+                   transactions, newest first). Duplicates are only found
+                   within the scanned transactions.
+        limit: Max duplicate groups to return (default 50)
+    """
+    if max_pages < 1:
+        return "Error: max_pages must be at least 1"
+    range_start, range_end = _complete_date_range(start_date, end_date)
+    try:
+
+        async def _find_duplicates():
+            client = await get_monarch_client()
+            kwargs: Dict[str, Any] = {"max_pages": max_pages}
+            if range_start:
+                kwargs["start_date"] = range_start
+            if range_end:
+                kwargs["end_date"] = range_end
+            if account_id:
+                kwargs["account_ids"] = [account_id]
+            return await client.find_duplicate_transactions(**kwargs)
+
+        groups = run_async(_find_duplicates()) or []
+        formatted = [_format_duplicate_group(g) for g in groups]
+        result = {
+            "duplicate_groups": len(formatted),
+            "extra_copies": sum(g["count"] - 1 for g in formatted),
+            "scan": {"max_pages": max_pages, "page_size": 500},
+            "groups": formatted[: max(limit, 0)],
+        }
+        if len(formatted) > limit:
+            result["truncated"] = f"showing {limit} of {len(formatted)} groups"
+        return json.dumps(result, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to find duplicate transactions: {e}")
+        return f"Error finding duplicate transactions: {str(e)}"
 
 
 def main():
