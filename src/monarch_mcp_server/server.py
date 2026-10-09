@@ -665,11 +665,37 @@ def _resolve_by_id_or_name(
     raise ValueError(f"{kind} '{ref}' not found. Valid {kind.lower()}s: {valid}")
 
 
+def _account_is_open(account: Dict[str, Any]) -> bool:
+    """True if an account is open (not closed/deactivated) and not hidden.
+
+    Fields come from the Monarch AccountFields fragment: `deactivatedAt`
+    (set when an account is closed) and `isHidden` (hidden by the user).
+    `hideFromList` is only a summary-display preference and does not make an
+    account unusable.
+    """
+    return not account.get("deactivatedAt") and not account.get("isHidden")
+
+
 def _resolve_account(accounts_response: Dict[str, Any], ref: str) -> str:
-    """Resolve an account id or (display) name to an account id."""
+    """Resolve an account id or (display) name to an account id.
+
+    Names are matched only against open, non-hidden accounts, and the "valid
+    accounts" list in errors shows only those. An explicit id may be any
+    account, but if it is closed or hidden a clear error is raised rather than
+    silently writing to it.
+    """
     accounts = (accounts_response or {}).get("accounts", []) or []
+    ref_s = str(ref).strip()
+    for a in accounts:
+        if str(a.get("id")) == ref_s and not _account_is_open(a):
+            label = a.get("displayName") or a.get("name") or ref_s
+            state = "closed" if a.get("deactivatedAt") else "hidden"
+            raise ValueError(
+                f"Account '{label}' (id {ref_s}) is {state}; refusing to create a "
+                "transaction on it. Use an open account."
+            )
     return _resolve_by_id_or_name(
-        accounts,
+        [a for a in accounts if _account_is_open(a)],
         ref,
         "Account",
         ("displayName", "name"),

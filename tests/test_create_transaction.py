@@ -23,6 +23,11 @@ ACCOUNTS = {
         {"id": "acc-2", "displayName": "Test Savings"},
         {"id": "acc-3", "displayName": "Dup"},
         {"id": "acc-4", "displayName": "dup"},
+        {"id": "acc-closed", "displayName": "Old Closed", "deactivatedAt": "2025-01-01"},
+        {"id": "acc-hidden", "displayName": "Secret Hidden", "isHidden": True},
+        # A closed account sharing a name with an open one must not cause ambiguity.
+        {"id": "acc-closed2", "displayName": "Test Checking", "deactivatedAt": "2024-05-05"},
+        {"id": "acc-open-flags", "displayName": "Open Flags", "isHidden": False, "deactivatedAt": None},
     ]
 }
 CATEGORIES = {
@@ -194,3 +199,54 @@ def test_api_payload_errors_are_surfaced():
         account="acc-1", category="cat-1",
     )
     assert out.startswith("Error creating transaction") and "bad" in out
+
+
+def test_name_never_resolves_to_closed_or_hidden_account():
+    for name in ("Old Closed", "secret hidden"):
+        fake = FakeClient()
+        out = _call(
+            fake, amount=1, date="2026-10-08", merchant_name="M",
+            account=name, category="cat-1",
+        )
+        assert out.startswith("Error creating transaction") and "not found" in out
+        assert fake.calls == []
+
+
+def test_closed_duplicate_name_does_not_make_open_account_ambiguous():
+    fake = FakeClient()
+    _call(
+        fake, amount=1, date="2026-10-08", merchant_name="M",
+        account="Test Checking", category="cat-1",
+    )
+    assert fake.calls[0]["account_id"] == "acc-1"
+
+
+def test_valid_account_list_excludes_closed_and_hidden():
+    out = _call(
+        FakeClient(), amount=1, date="2026-10-08", merchant_name="M",
+        account="Nope", category="cat-1",
+    )
+    assert "Test Checking" in out and "Open Flags" in out
+    assert "Old Closed" not in out and "Secret Hidden" not in out
+
+
+@pytest.mark.parametrize(
+    "acc_id,state", [("acc-closed", "closed"), ("acc-hidden", "hidden")]
+)
+def test_explicit_id_of_closed_or_hidden_account_errors(acc_id, state):
+    fake = FakeClient()
+    out = _call(
+        fake, amount=1, date="2026-10-08", merchant_name="M",
+        account_id=acc_id, category="cat-1",
+    )
+    assert out.startswith("Error creating transaction") and f"is {state}" in out
+    assert fake.calls == []
+
+
+def test_explicit_id_of_open_account_with_false_flags_works():
+    fake = FakeClient()
+    _call(
+        fake, amount=1, date="2026-10-08", merchant_name="M",
+        account_id="acc-open-flags", category="cat-1",
+    )
+    assert fake.calls[0]["account_id"] == "acc-open-flags"
