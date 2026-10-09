@@ -29,10 +29,17 @@ async def test_first_step_login_exceptions_are_handled(exc, needle, capsys):
     mod = _load()
     mm = MagicMock()
     mm.login = AsyncMock(side_effect=exc)
-    with patch.object(mod, "MonarchMoney", return_value=mm), patch(
+    # login_setup.main() starts with secure_session.delete_token(); never let that
+    # reach a real credential store (incident 2026-10-08).
+    fake_session = MagicMock()
+    with patch.object(mod, "secure_session", fake_session), patch.object(
+        mod, "load_dotenv"
+    ), patch.object(mod, "MonarchMoney", return_value=mm), patch(
         "builtins.input", lambda prompt="": "user@example.test" if "Email" in prompt else "y"
     ), patch.object(mod.getpass, "getpass", return_value="pw"):
         await mod.main()
     out = capsys.readouterr().out
     assert needle in out
     assert "Testing connection" not in out  # returned before continuing
+    fake_session.delete_token.assert_called_once()
+    fake_session.save_authenticated_session.assert_not_called()
